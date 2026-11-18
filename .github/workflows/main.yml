@@ -7,12 +7,15 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Java 17
@@ -23,61 +26,63 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+          with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            build-tools;35.0.0
 
-      - name: Accept Android Licenses
-        run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Find and Extract Project ZIP
+      - name: Extract Android Project
         shell: bash
         run: |
-          if ! find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -not -path "./.git/*" | grep -q .; then
-            ZIP_FILE=$(find . -maxdepth 3 -type f -iname "*.zip" -not -path "./.git/*" | head -n 1)
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname "*.zip" | head -n 1)
 
-            if [ -z "$ZIP_FILE" ]; then
-              echo "Android project ZIP not found"
-              exit 1
-            fi
-
-            mkdir -p project
-            unzip -q "$ZIP_FILE" -d project
-          fi
-
-          SETTINGS_FILE=$(find . -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) -not -path "./.git/*" | head -n 1)
-
-          if [ -z "$SETTINGS_FILE" ]; then
-            echo "Android project settings file not found"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Android project ZIP not found"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$SETTINGS_FILE")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found: $PROJECT_DIR"
+          mkdir -p project
+          unzip -q "$ZIP_FILE" -d project
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+          SETTINGS=$(find project -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "Gradle settings file not found"
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
 
       - name: Build APK
         shell: bash
         run: |
           cd "$PROJECT_DIR"
 
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-            ./gradlew --no-daemon assembleDebug
-          else
-            gradle --no-daemon assembleDebug
+          if [ ! -f gradlew ]; then
+            echo "Gradle wrapper not found"
+            exit 1
           fi
+
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          mkdir -p output
+          APK=$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "APK not generated"
+            exit 1
+          fi
+
+          cp "$APK" output/DTDC-Loading-Counter.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: DTDC-Loading-Counter-APK
-          path: '**/build/outputs/apk/debug/*.apk'
+          path: output/DTDC-Loading-Counter.apk
           if-no-files-found: error
